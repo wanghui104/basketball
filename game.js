@@ -4,7 +4,7 @@ const madeCountEl = document.getElementById("made-count");
 
 const court = {
   width: 1080,
-  depth: 760,
+  depth: 880,
   top: 64,
   scaleY: 0.56,
   zScale: 0.78,
@@ -325,6 +325,7 @@ function drawCourt() {
   const threePointSideX = 440;
   const threePointBreakY = 170;
   const threePointRadius = threePointSideX;
+  const centerCircleRadius = 130;
 
   const corners = [
     project(-court.width / 2, 0),
@@ -377,6 +378,7 @@ function drawCourt() {
     breakY: threePointBreakY,
     radius: threePointRadius,
   });
+  drawArc(0, court.depth, centerCircleRadius, Math.PI, Math.PI * 2);
 
   ctx.strokeStyle = "rgba(245, 244, 230, 0.44)";
   ctx.lineWidth = 2;
