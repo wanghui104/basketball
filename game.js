@@ -15,9 +15,19 @@ const hoop = {
   x: 0,
   y: 68,
   z: 193,
-  rimRadius: 38,
+  rimRadius: 28,
   backboardY: 38,
   backboardZ: 233,
+};
+
+const net = {
+  swayX: 0,
+  swayY: 0,
+  vx: 0,
+  vy: 0,
+  phase: 0,
+  activeTimer: 0,
+  touchCooldown: 0,
 };
 
 const player = {
@@ -110,6 +120,56 @@ function playerModel(value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function kickNet(strength, dx = 0, dy = 0) {
+  const mag = Math.hypot(dx, dy) || 1;
+  net.vx += (dx / mag) * 95 * strength;
+  net.vy += (dy / mag + 0.45) * 55 * strength;
+  net.phase += 1.8 * strength;
+  net.activeTimer = 5;
+  net.touchCooldown = 0.12;
+}
+
+function updateNet(dt) {
+  if (net.activeTimer <= 0) {
+    net.swayX = 0;
+    net.swayY = 0;
+    net.vx = 0;
+    net.vy = 0;
+    net.phase = 0;
+    net.touchCooldown = Math.max(0, net.touchCooldown - dt);
+    return;
+  }
+
+  net.activeTimer = Math.max(0, net.activeTimer - dt);
+  if (net.activeTimer <= 0) {
+    net.swayX = 0;
+    net.swayY = 0;
+    net.vx = 0;
+    net.vy = 0;
+    net.phase = 0;
+    net.touchCooldown = 0;
+    return;
+  }
+
+  net.phase += dt * 9;
+  net.swayX += net.vx * dt;
+  net.swayY += net.vy * dt;
+  net.vx += -net.swayX * 34 * dt;
+  net.vy += -net.swayY * 38 * dt;
+  const damping = Math.pow(0.002, dt);
+  net.vx *= damping;
+  net.vy *= damping;
+  net.swayX *= Math.pow(0.018, dt);
+  net.swayY *= Math.pow(0.014, dt);
+  if (Math.abs(net.swayX) + Math.abs(net.swayY) + Math.abs(net.vx) + Math.abs(net.vy) < 0.08) {
+    net.swayX = 0;
+    net.swayY = 0;
+    net.vx = 0;
+    net.vy = 0;
+  }
+  net.touchCooldown = Math.max(0, net.touchCooldown - dt);
 }
 
 function resetBallToPlayer(text = "回到手中") {
@@ -282,6 +342,7 @@ function updateFreeBall(dt) {
   const rimDist = Math.hypot(rimDx, rimDy);
   const descendingThroughRim = prevZ > hoop.z + 8 && ball.z <= hoop.z + 8 && ball.vz < 0;
   if (!ball.scored && descendingThroughRim && rimDist < hoop.rimRadius - ball.r * 0.45) {
+    kickNet(1.35, rimDx + ball.vx * 0.04, rimDy + ball.vy * 0.04);
     made += 1;
     madeCountEl.textContent = String(made);
     ball.scored = true;
@@ -296,6 +357,16 @@ function updateFreeBall(dt) {
     ball.vz = Math.max(ball.vz, 110);
     message = "碰筐";
     messageTimer = 0.55;
+  }
+
+  const netTop = hoop.z + 3;
+  const netBottom = hoop.z - 29;
+  const inNetHeight = ball.z < netTop + ball.r * 0.35 && ball.z > netBottom - ball.r * 0.35;
+  const netProgress = clamp((netTop - ball.z) / (netTop - netBottom), 0, 1);
+  const netRadius = hoop.rimRadius * (1 - netProgress) + hoop.rimRadius * 0.58 * netProgress;
+  const closeToNet = rimDist < netRadius + ball.r * 0.85 && rimDist > netRadius - ball.r * 1.2;
+  if (!ball.controlled && net.touchCooldown <= 0 && inNetHeight && closeToNet) {
+    kickNet(0.55, rimDx + ball.vx * 0.025, rimDy + ball.vy * 0.025);
   }
 
   const pickupDist = Math.hypot(ball.x - player.x, ball.y - player.y);
@@ -326,6 +397,7 @@ function update(dt) {
     updateFreeBall(dt);
     collideBallWithPlayer(dt);
   }
+  updateNet(dt);
   messageTimer = Math.max(0, messageTimer - dt);
 }
 
@@ -392,11 +464,34 @@ function drawCourt() {
   });
   drawArc(0, court.depth, centerCircleRadius, Math.PI, Math.PI * 2);
 
-  ctx.strokeStyle = "rgba(245, 244, 230, 0.44)";
-  ctx.lineWidth = screen(2);
-  for (let x = -96; x <= 96; x += 32) {
-    linePath([[x, 100], [x, 120]]);
+  ctx.fillStyle = "rgba(245, 244, 230, 0.88)";
+  const laneMarkLength = 18;
+  const laneMarkThin = laneMarkLength / 2;
+  const laneMarkYs = [1, 2, 3, 4].map((step) => (freeThrowY * step) / 5);
+  for (const [index, y] of laneMarkYs.entries()) {
+    const markWidth = index === 0 ? laneMarkLength : laneMarkThin;
+    drawLaneMark(-1, paintHalfWidth, y, laneMarkLength, markWidth);
+    drawLaneMark(1, paintHalfWidth, y, laneMarkLength, markWidth);
   }
+}
+
+function drawLaneMark(side, paintHalfWidth, y, length, width) {
+  const innerX = side * paintHalfWidth;
+  const outerX = side * (paintHalfWidth + length);
+  const y0 = y - width / 2;
+  const y1 = y + width / 2;
+  const points = [
+    project(innerX, y0),
+    project(outerX, y0),
+    project(outerX, y1),
+    project(innerX, y1),
+  ];
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function linePath(points) {
@@ -443,21 +538,13 @@ function drawThreePointLine({ sideX, breakY, radius }) {
 
 function drawHoop() {
   const poleBase = project(0, -24, 0);
-  const poleTop = project(0, 18, 297);
   const marker = project(hoop.x, hoop.y, 0);
-  ctx.fillStyle = "rgba(255, 248, 230, 0.08)";
-  ctx.strokeStyle = "rgba(255, 248, 230, 0.24)";
-  ctx.lineWidth = screen(1.5);
+  ctx.fillStyle = "rgba(255, 248, 230, 0.035)";
+  ctx.strokeStyle = "rgba(255, 248, 230, 0.11)";
+  ctx.lineWidth = screen(1);
   ctx.beginPath();
-  ctx.ellipse(marker.x, marker.y, hoop.rimRadius * marker.s, screen(12), 0, 0, Math.PI * 2);
+  ctx.ellipse(marker.x, marker.y, hoop.rimRadius * marker.s * 1.08, screen(13), 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.stroke();
-
-  ctx.strokeStyle = "#6b4628";
-  ctx.lineWidth = screen(8);
-  ctx.beginPath();
-  ctx.moveTo(poleBase.x, poleBase.y);
-  ctx.lineTo(poleTop.x, poleTop.y);
   ctx.stroke();
 
   const b = project(0, hoop.backboardY, hoop.backboardZ);
@@ -465,12 +552,29 @@ function drawHoop() {
   const boardH = screen(96);
   const targetW = screen(52);
   const targetH = screen(34);
+  const targetBottomY = b.y - screen(4) + targetH;
+
+  ctx.fillStyle = "rgba(73, 49, 29, 0.78)";
+  ctx.strokeStyle = "rgba(250, 230, 188, 0.5)";
+  ctx.lineWidth = screen(1.5);
+  ctx.beginPath();
+  ctx.rect(poleBase.x - screen(23), poleBase.y - screen(5), screen(46), screen(12));
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = "#6b4628";
+  ctx.lineWidth = screen(10);
+  ctx.beginPath();
+  ctx.moveTo(poleBase.x, poleBase.y);
+  ctx.lineTo(poleBase.x, targetBottomY);
+  ctx.stroke();
+
   ctx.fillStyle = "rgba(224, 240, 218, 0.58)";
   ctx.strokeStyle = "rgba(250, 255, 245, 0.85)";
   ctx.lineWidth = screen(3);
   ctx.fillRect(b.x - boardW / 2, b.y - screen(55), boardW, boardH);
   ctx.strokeRect(b.x - boardW / 2, b.y - screen(55), boardW, boardH);
-  ctx.strokeRect(b.x - targetW / 2, b.y - screen(14), targetW, targetH);
+  ctx.strokeRect(b.x - targetW / 2, b.y - screen(4), targetW, targetH);
 
   const r = project(hoop.x, hoop.y, hoop.z);
   ctx.strokeStyle = "#db563d";
@@ -479,15 +583,53 @@ function drawHoop() {
   ctx.ellipse(r.x, r.y, hoop.rimRadius * r.s, screen(11), 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(244, 244, 230, 0.55)";
-  ctx.lineWidth = screen(1.4);
-  for (let i = -3; i <= 3; i += 1) {
-    const x = r.x + i * 10 * r.s;
+  const netMotion = net.activeTimer > 0 ? 1 : 0;
+  const swayX = screen(net.swayX + Math.sin(net.phase) * Math.min(5, Math.abs(net.swayX) * 0.14) * netMotion);
+  const swayY = screen(net.swayY + Math.cos(net.phase * 0.85) * Math.min(4, Math.abs(net.swayY) * 0.12) * netMotion);
+  const netLength = screen(27.5);
+  const topRx = hoop.rimRadius * r.s * 0.92;
+  const topRy = screen(10);
+  const bottomRx = topRx * 0.58;
+  const bottomRy = screen(6.2);
+  const strandCount = 10;
+
+  ctx.strokeStyle = "rgba(252, 249, 235, 0.7)";
+  ctx.lineWidth = screen(1.25);
+  for (let i = 0; i < strandCount; i += 1) {
+    const t = i / strandCount;
+    const angle = Math.PI * 2 * t;
+    const topX = r.x + Math.cos(angle) * topRx;
+    const topY = r.y + Math.sin(angle) * topRy + screen(4);
+    const bottomX = r.x + swayX + Math.cos(angle + 0.22) * bottomRx;
+    const bottomY = r.y + netLength + swayY + Math.sin(angle + 0.22) * bottomRy;
+    const midX = (topX + bottomX) * 0.5 + Math.sin(net.phase + i * 0.8) * screen(3.5) * netMotion;
+    const midY = (topY + bottomY) * 0.5 + screen(5);
+
+    ctx.globalAlpha = i < strandCount / 2 ? 0.48 : 0.78;
     ctx.beginPath();
-    ctx.moveTo(x, r.y + screen(5));
-    ctx.lineTo(x * 0.99 + r.x * 0.01, r.y + screen(44));
+    ctx.moveTo(topX, topY);
+    ctx.quadraticCurveTo(midX, midY, bottomX, bottomY);
     ctx.stroke();
   }
+
+  ctx.globalAlpha = 0.62;
+  for (let band = 1; band <= 5; band += 1) {
+    const p = band / 6;
+    const bandX = r.x + swayX * p * 0.72;
+    const bandY = r.y + screen(7) + netLength * p + swayY * p;
+    const bandRx = topRx * (1 - p) + bottomRx * p;
+    const bandRy = topRy * (1 - p) + bottomRy * p;
+    ctx.beginPath();
+    ctx.ellipse(bandX, bandY, bandRx, bandRy, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.strokeStyle = "#db563d";
+  ctx.lineWidth = screen(5);
+  ctx.beginPath();
+  ctx.ellipse(r.x, r.y, hoop.rimRadius * r.s, screen(11), 0, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 function drawBall() {
