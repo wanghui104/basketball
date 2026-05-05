@@ -318,10 +318,10 @@ function update(dt) {
 }
 
 function drawCourt() {
-  const paintHalfWidth = 108;
-  const paintTop = 78;
-  const freeThrowY = 320;
-  const freeThrowRadius = 88;
+  const paintHalfWidth = 140;
+  const paintTop = 0;
+  const freeThrowY = 382;
+  const freeThrowRadius = paintHalfWidth;
   const threePointSideX = 440;
   const threePointBreakY = 170;
   const threePointRadius = threePointSideX;
