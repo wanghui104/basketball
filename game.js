@@ -8,15 +8,16 @@ const court = {
   top: 64,
   scaleY: 0.56,
   zScale: 0.78,
+  renderScale: 0.8,
 };
 
 const hoop = {
   x: 0,
-  y: 92,
-  z: 112,
+  y: 68,
+  z: 193,
   rimRadius: 38,
-  backboardY: 64,
-  backboardZ: 142,
+  backboardY: 38,
+  backboardZ: 233,
 };
 
 const player = {
@@ -30,6 +31,7 @@ const player = {
   stride: 0,
   dribbleHand: 1,
   shootCooldown: 0,
+  modelScale: 0.667,
 };
 
 const ball = {
@@ -75,11 +77,12 @@ window.addEventListener("keyup", (event) => {
 
 function view() {
   const rect = canvas.getBoundingClientRect();
+  const bottomGap = Math.max(12, rect.height * 0.025);
   return {
     w: rect.width,
     h: rect.height,
     cx: rect.width * 0.5,
-    top: rect.height * 0.15,
+    top: rect.height - court.depth * court.scaleY * court.renderScale - bottomGap,
   };
 }
 
@@ -89,12 +92,20 @@ function depthScale(y) {
 
 function project(x, y, z = 0) {
   const v = view();
-  const s = depthScale(y);
+  const s = depthScale(y) * court.renderScale;
   return {
     x: v.cx + x * s,
-    y: v.top + y * court.scaleY - z * court.zScale,
+    y: v.top + y * court.scaleY * court.renderScale - z * court.zScale * court.renderScale,
     s,
   };
+}
+
+function screen(value) {
+  return value * court.renderScale;
+}
+
+function playerModel(value) {
+  return value * player.modelScale;
 }
 
 function clamp(value, min, max) {
@@ -159,8 +170,9 @@ function updatePlayer(dt) {
 
   player.x += player.vx * dt;
   player.y += player.vy * dt;
-  player.x = clamp(player.x, -court.width * 0.45, court.width * 0.45);
-  player.y = clamp(player.y, 118, court.depth - 42);
+  const edgeOverhang = playerModel(36);
+  player.x = clamp(player.x, -court.width / 2 - edgeOverhang, court.width / 2 + edgeOverhang);
+  player.y = clamp(player.y, -edgeOverhang, court.depth + edgeOverhang);
   player.shootCooldown = Math.max(0, player.shootCooldown - dt);
 }
 
@@ -169,14 +181,14 @@ function handPoint() {
   const side = player.dribbleHand;
   const phase = performance.now() / 1000 * 7.2;
   const bounce = (Math.sin(phase) + 1) * 0.5;
-  const lateral = side * 30;
-  const forward = 16;
+  const lateral = side * playerModel(30);
+  const forward = playerModel(16);
   const cos = Math.cos(toHoop);
   const sin = Math.sin(toHoop);
   return {
     x: player.x + cos * forward - sin * lateral,
     y: player.y + sin * forward + cos * lateral,
-    z: 13 + bounce * 30,
+    z: playerModel(13 + bounce * 30),
     bounce,
   };
 }
@@ -190,8 +202,8 @@ function updateControlledBall() {
 }
 
 function collideBallWithPlayer(dt) {
-  const body = { x: player.x, y: player.y, z: 66, rx: 32, ry: 25, rz: 58 };
-  const head = { x: player.x, y: player.y - 4, z: 132, r: 22 };
+  const body = { x: player.x, y: player.y, z: playerModel(66), rx: playerModel(32), ry: playerModel(25), rz: playerModel(58) };
+  const head = { x: player.x, y: player.y - playerModel(4), z: playerModel(132), r: playerModel(22) };
 
   const dx = (ball.x - body.x) / body.rx;
   const dy = (ball.y - body.y) / body.ry;
@@ -355,7 +367,7 @@ function drawCourt() {
   ctx.fill();
 
   ctx.strokeStyle = "rgba(245, 244, 230, 0.82)";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = screen(3);
   linePath([
     [-court.width / 2, 0],
     [court.width / 2, 0],
@@ -381,7 +393,7 @@ function drawCourt() {
   drawArc(0, court.depth, centerCircleRadius, Math.PI, Math.PI * 2);
 
   ctx.strokeStyle = "rgba(245, 244, 230, 0.44)";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = screen(2);
   for (let x = -96; x <= 96; x += 32) {
     linePath([[x, 100], [x, 120]]);
   }
@@ -430,37 +442,50 @@ function drawThreePointLine({ sideX, breakY, radius }) {
 }
 
 function drawHoop() {
-  const poleBase = project(0, 36, 0);
-  const poleTop = project(0, 52, 205);
-  ctx.strokeStyle = "#232725";
-  ctx.lineWidth = 8;
+  const poleBase = project(0, -24, 0);
+  const poleTop = project(0, 18, 297);
+  const marker = project(hoop.x, hoop.y, 0);
+  ctx.fillStyle = "rgba(255, 248, 230, 0.08)";
+  ctx.strokeStyle = "rgba(255, 248, 230, 0.24)";
+  ctx.lineWidth = screen(1.5);
+  ctx.beginPath();
+  ctx.ellipse(marker.x, marker.y, hoop.rimRadius * marker.s, screen(12), 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = "#6b4628";
+  ctx.lineWidth = screen(8);
   ctx.beginPath();
   ctx.moveTo(poleBase.x, poleBase.y);
   ctx.lineTo(poleTop.x, poleTop.y);
   ctx.stroke();
 
   const b = project(0, hoop.backboardY, hoop.backboardZ);
+  const boardW = screen(156);
+  const boardH = screen(96);
+  const targetW = screen(52);
+  const targetH = screen(34);
   ctx.fillStyle = "rgba(224, 240, 218, 0.58)";
   ctx.strokeStyle = "rgba(250, 255, 245, 0.85)";
-  ctx.lineWidth = 3;
-  ctx.fillRect(b.x - 78, b.y - 55, 156, 96);
-  ctx.strokeRect(b.x - 78, b.y - 55, 156, 96);
-  ctx.strokeRect(b.x - 26, b.y - 14, 52, 34);
+  ctx.lineWidth = screen(3);
+  ctx.fillRect(b.x - boardW / 2, b.y - screen(55), boardW, boardH);
+  ctx.strokeRect(b.x - boardW / 2, b.y - screen(55), boardW, boardH);
+  ctx.strokeRect(b.x - targetW / 2, b.y - screen(14), targetW, targetH);
 
   const r = project(hoop.x, hoop.y, hoop.z);
   ctx.strokeStyle = "#db563d";
-  ctx.lineWidth = 5;
+  ctx.lineWidth = screen(5);
   ctx.beginPath();
-  ctx.ellipse(r.x, r.y, hoop.rimRadius * r.s, 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(r.x, r.y, hoop.rimRadius * r.s, screen(11), 0, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.strokeStyle = "rgba(244, 244, 230, 0.55)";
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = screen(1.4);
   for (let i = -3; i <= 3; i += 1) {
     const x = r.x + i * 10 * r.s;
     ctx.beginPath();
-    ctx.moveTo(x, r.y + 5);
-    ctx.lineTo(x * 0.99 + r.x * 0.01, r.y + 44);
+    ctx.moveTo(x, r.y + screen(5));
+    ctx.lineTo(x * 0.99 + r.x * 0.01, r.y + screen(44));
     ctx.stroke();
   }
 }
@@ -472,19 +497,19 @@ function drawBall() {
 
   ctx.fillStyle = `rgba(0, 0, 0, ${clamp(0.34 - ball.z / 520, 0.08, 0.3)})`;
   ctx.beginPath();
-  ctx.ellipse(shadow.x, shadow.y + 3, radius * 1.05, radius * 0.36, 0, 0, Math.PI * 2);
+  ctx.ellipse(shadow.x, shadow.y + screen(3), radius * 1.05, radius * 0.36, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#e87822";
   ctx.strokeStyle = "#2b1710";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = screen(2);
   ctx.beginPath();
   ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
   ctx.strokeStyle = "#2b1710";
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = screen(1.6);
   ctx.beginPath();
   ctx.arc(p.x, p.y, radius * 0.72, -Math.PI / 2, Math.PI / 2);
   ctx.stroke();
@@ -500,44 +525,44 @@ function drawPlayer() {
   const feet = project(player.x, player.y, 0);
   const speed = Math.hypot(player.vx, player.vy);
   const moveAngle = speed > 18 ? Math.atan2(player.vy, player.vx) : Math.atan2(hoop.y - player.y, hoop.x - player.x);
-  const lean = clamp(speed / player.dashSpeed, 0, 1) * 16;
-  const bob = Math.sin(player.stride) * 3;
+  const lean = playerModel(clamp(speed / player.dashSpeed, 0, 1) * 16);
+  const bob = playerModel(Math.sin(player.stride) * 3);
   const side = Math.cos(player.stride);
 
   const body = project(
     player.x + Math.cos(moveAngle) * lean,
     player.y + Math.sin(moveAngle) * lean,
-    70 + bob
+    playerModel(70) + bob
   );
   const head = project(
-    player.x + Math.cos(moveAngle) * (lean + 8),
-    player.y + Math.sin(moveAngle) * (lean + 8),
-    132 + bob
+    player.x + Math.cos(moveAngle) * (lean + playerModel(8)),
+    player.y + Math.sin(moveAngle) * (lean + playerModel(8)),
+    playerModel(132) + bob
   );
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
   ctx.beginPath();
-  ctx.ellipse(feet.x, feet.y + 8, 38, 13, 0, 0, Math.PI * 2);
+  ctx.ellipse(feet.x, feet.y + screen(playerModel(8)), screen(playerModel(38)), screen(playerModel(13)), 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.strokeStyle = "#151515";
-  ctx.lineWidth = 5;
+  ctx.lineWidth = screen(playerModel(5));
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  const leftFoot = project(player.x - 23 * side, player.y + 20, 0);
-  const rightFoot = project(player.x + 23 * side, player.y + 18, 0);
-  const hip = project(player.x, player.y, 52 + bob);
-  const kneeL = project(player.x - 15 * side, player.y + 11, 28);
-  const kneeR = project(player.x + 15 * side, player.y + 10, 28);
+  const leftFoot = project(player.x - playerModel(23) * side, player.y + playerModel(20), 0);
+  const rightFoot = project(player.x + playerModel(23) * side, player.y + playerModel(18), 0);
+  const hip = project(player.x, player.y, playerModel(52) + bob);
+  const kneeL = project(player.x - playerModel(15) * side, player.y + playerModel(11), playerModel(28));
+  const kneeR = project(player.x + playerModel(15) * side, player.y + playerModel(10), playerModel(28));
   strokeLimb(hip, kneeL, leftFoot);
   strokeLimb(hip, kneeR, rightFoot);
 
-  const shoulderL = project(player.x - 24, player.y - 2, 100 + bob);
-  const shoulderR = project(player.x + 24, player.y - 2, 100 + bob);
+  const shoulderL = project(player.x - playerModel(24), player.y - playerModel(2), playerModel(100) + bob);
+  const shoulderR = project(player.x + playerModel(24), player.y - playerModel(2), playerModel(100) + bob);
   const hand = handPoint();
-  const dribble = project(hand.x, hand.y, hand.z + 12);
-  const offHand = project(player.x - player.dribbleHand * 26, player.y - 22, 80 + bob);
+  const dribble = project(hand.x, hand.y, hand.z + playerModel(12));
+  const offHand = project(player.x - player.dribbleHand * playerModel(26), player.y - playerModel(22), playerModel(80) + bob);
   if (player.dribbleHand > 0) {
     strokeLimb(shoulderR, dribble);
     strokeLimb(shoulderL, offHand);
@@ -548,24 +573,24 @@ function drawPlayer() {
 
   ctx.fillStyle = "#f5f1df";
   ctx.strokeStyle = "#151515";
-  ctx.lineWidth = 4;
+  ctx.lineWidth = screen(playerModel(4));
   ctx.beginPath();
-  ctx.ellipse(body.x, body.y, 29, 47, -0.18 + Math.cos(moveAngle) * 0.12, 0, Math.PI * 2);
+  ctx.ellipse(body.x, body.y, screen(playerModel(29)), screen(playerModel(47)), -0.18 + Math.cos(moveAngle) * 0.12, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
   ctx.strokeStyle = "#af2e2c";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = screen(playerModel(3));
   ctx.beginPath();
-  ctx.moveTo(body.x - 8, body.y - 28);
-  ctx.lineTo(body.x + 10, body.y + 20);
+  ctx.moveTo(body.x - screen(playerModel(8)), body.y - screen(playerModel(28)));
+  ctx.lineTo(body.x + screen(playerModel(10)), body.y + screen(playerModel(20)));
   ctx.stroke();
 
   ctx.fillStyle = "#e7dcc8";
   ctx.strokeStyle = "#151515";
-  ctx.lineWidth = 4;
+  ctx.lineWidth = screen(playerModel(4));
   ctx.beginPath();
-  ctx.arc(head.x, head.y, 22, 0, Math.PI * 2);
+  ctx.arc(head.x, head.y, screen(playerModel(22)), 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 }
@@ -585,7 +610,7 @@ function drawMessage() {
   ctx.globalAlpha = clamp(messageTimer, 0, 1);
   ctx.fillStyle = "rgba(15, 18, 14, 0.58)";
   ctx.strokeStyle = "rgba(255, 248, 230, 0.24)";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = screen(1);
   roundRect(v.cx - 76, v.h - 84, 152, 38, 7);
   ctx.fill();
   ctx.stroke();
