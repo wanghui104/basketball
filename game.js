@@ -3,11 +3,11 @@ const ctx = canvas.getContext("2d");
 const madeCountEl = document.getElementById("made-count");
 
 const court = {
-  width: 880,
-  depth: 620,
+  width: 1080,
+  depth: 760,
   top: 64,
-  scaleY: 0.78,
-  zScale: 0.88,
+  scaleY: 0.56,
+  zScale: 0.78,
 };
 
 const hoop = {
@@ -21,7 +21,7 @@ const hoop = {
 
 const player = {
   x: -120,
-  y: 455,
+  y: 560,
   vx: 0,
   vy: 0,
   facing: -Math.PI / 2,
@@ -79,12 +79,12 @@ function view() {
     w: rect.width,
     h: rect.height,
     cx: rect.width * 0.5,
-    top: rect.height * 0.12,
+    top: rect.height * 0.15,
   };
 }
 
 function depthScale(y) {
-  return 0.9 + (y / court.depth) * 0.16;
+  return 0.86 + (y / court.depth) * 0.2;
 }
 
 function project(x, y, z = 0) {
@@ -160,7 +160,7 @@ function updatePlayer(dt) {
   player.x += player.vx * dt;
   player.y += player.vy * dt;
   player.x = clamp(player.x, -court.width * 0.45, court.width * 0.45);
-  player.y = clamp(player.y, 112, court.depth - 42);
+  player.y = clamp(player.y, 118, court.depth - 42);
   player.shootCooldown = Math.max(0, player.shootCooldown - dt);
 }
 
@@ -303,7 +303,7 @@ function update(dt) {
   }
   if (keys.has("KeyR")) {
     player.x = -120;
-    player.y = 455;
+    player.y = 560;
     resetBallToPlayer("重置");
     keys.delete("KeyR");
   }
@@ -318,6 +318,14 @@ function update(dt) {
 }
 
 function drawCourt() {
+  const paintHalfWidth = 108;
+  const paintTop = 78;
+  const freeThrowY = 320;
+  const freeThrowRadius = 88;
+  const threePointSideX = 440;
+  const threePointBreakY = 170;
+  const threePointRadius = threePointSideX;
+
   const corners = [
     project(-court.width / 2, 0),
     project(court.width / 2, 0),
@@ -333,10 +341,10 @@ function drawCourt() {
   ctx.fill();
 
   const paint = [
-    project(-92, 70),
-    project(92, 70),
-    project(92, 310),
-    project(-92, 310),
+    project(-paintHalfWidth, paintTop),
+    project(paintHalfWidth, paintTop),
+    project(paintHalfWidth, freeThrowY),
+    project(-paintHalfWidth, freeThrowY),
   ];
   ctx.fillStyle = "#b66a4b";
   ctx.beginPath();
@@ -354,16 +362,26 @@ function drawCourt() {
     [-court.width / 2, court.depth],
     [-court.width / 2, 0],
   ]);
-  linePath([[-92, 70], [92, 70], [92, 310], [-92, 310], [-92, 70]]);
-  linePath([[-60, 70], [60, 70]]);
+  linePath([
+    [-paintHalfWidth, paintTop],
+    [paintHalfWidth, paintTop],
+    [paintHalfWidth, freeThrowY],
+    [-paintHalfWidth, freeThrowY],
+    [-paintHalfWidth, paintTop],
+  ]);
+  linePath([[-64, paintTop], [64, paintTop]]);
 
-  drawArc(0, 310, 118, Math.PI, 0);
-  drawArc(0, 96, 318, 0.15, Math.PI - 0.15);
+  drawArc(0, freeThrowY, freeThrowRadius, Math.PI, 0);
+  drawThreePointLine({
+    sideX: threePointSideX,
+    breakY: threePointBreakY,
+    radius: threePointRadius,
+  });
 
   ctx.strokeStyle = "rgba(245, 244, 230, 0.44)";
   ctx.lineWidth = 2;
-  for (let x = -84; x <= 84; x += 28) {
-    linePath([[x, 92], [x, 112]]);
+  for (let x = -96; x <= 96; x += 32) {
+    linePath([[x, 100], [x, 120]]);
   }
 }
 
@@ -386,6 +404,26 @@ function drawArc(cx, cy, r, a0, a1) {
     if (i === 0) ctx.moveTo(p.x, p.y);
     else ctx.lineTo(p.x, p.y);
   }
+  ctx.stroke();
+}
+
+function drawThreePointLine({ sideX, breakY, radius }) {
+  const steps = 54;
+  const rightBase = project(sideX, 0);
+  const rightBreak = project(sideX, breakY);
+
+  ctx.beginPath();
+  ctx.moveTo(rightBase.x, rightBase.y);
+  ctx.lineTo(rightBreak.x, rightBreak.y);
+
+  for (let i = 0; i <= steps; i += 1) {
+    const t = (Math.PI * i) / steps;
+    const p = project(Math.cos(t) * radius, breakY + Math.sin(t) * radius);
+    ctx.lineTo(p.x, p.y);
+  }
+
+  const leftBase = project(-sideX, 0);
+  ctx.lineTo(leftBase.x, leftBase.y);
   ctx.stroke();
 }
 
