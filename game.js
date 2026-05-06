@@ -56,6 +56,16 @@ const ball = {
   shot: false,
   scored: false,
 };
+const dribbleControl = {
+  historyWindow: 0.5,
+  moveDistanceThreshold: 32,
+  moving: false,
+  arcCenter: player.facing,
+  arcSpan: Math.PI * 2,
+  targetAngle: player.facing + Math.PI / 3,
+  lastBounceLow: false,
+  moveHistory: [],
+};
 
 const keys = new Set();
 const inputFadeMs = 250;
@@ -67,7 +77,7 @@ const inputAxes = {
 };
 let lastT = performance.now();
 let made = 0;
-let message = "自由练习";
+let message = "\u81ea\u7531\u7ec3\u4e60";
 let messageTimer = 2.4;
 
 function fitCanvas() {
@@ -129,6 +139,20 @@ function playerModel(value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function angleDelta(angle, center) {
+  return Math.atan2(Math.sin(angle - center), Math.cos(angle - center));
+}
+
+function clampAngleToArc(angle, center, span) {
+  if (span >= Math.PI * 2 - 0.001) return angle;
+  const halfSpan = span / 2;
+  return center + clamp(angleDelta(angle, center), -halfSpan, halfSpan);
+}
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
 }
 
 function updateInputAxisKey(code, pressed) {
@@ -209,7 +233,7 @@ function updateNet(dt) {
   net.touchCooldown = Math.max(0, net.touchCooldown - dt);
 }
 
-function resetBallToPlayer(text = "回到手中") {
+function resetBallToPlayer(text = "\u56de\u5230\u624b\u4e2d") {
   ball.controlled = true;
   ball.shot = false;
   ball.scored = false;
@@ -237,8 +261,58 @@ function shoot() {
   ball.vy = dy / time;
   ball.vz = (targetZ - ball.z + 0.5 * gravity * time * time) / time;
   player.shootCooldown = 0.45;
-  message = "投篮";
+  message = "\u6295\u7bee";
   messageTimer = 0.9;
+}
+
+function updatePlayerMoveHistory() {
+  const now = performance.now() / 1000;
+  dribbleControl.moveHistory.push({ t: now, x: player.x, y: player.y });
+  while (
+    dribbleControl.moveHistory.length > 1 &&
+    now - dribbleControl.moveHistory[0].t > dribbleControl.historyWindow
+  ) {
+    dribbleControl.moveHistory.shift();
+  }
+
+  const oldest = dribbleControl.moveHistory[0];
+  const dx = player.x - oldest.x;
+  const dy = player.y - oldest.y;
+  const displacement = Math.hypot(dx, dy);
+  dribbleControl.moving = displacement > dribbleControl.moveDistanceThreshold;
+  if (dribbleControl.moving) {
+    dribbleControl.arcCenter = Math.atan2(dy, dx);
+    dribbleControl.arcSpan = Math.PI;
+    dribbleControl.targetAngle = clampAngleToArc(
+      dribbleControl.targetAngle,
+      dribbleControl.arcCenter,
+      dribbleControl.arcSpan
+    );
+  } else {
+    dribbleControl.arcSpan = Math.PI * 2;
+  }
+}
+
+function pickDribbleTargetAngle() {
+  const span = dribbleControl.arcSpan;
+  if (span >= Math.PI * 2 - 0.001) {
+    return dribbleControl.targetAngle + randomBetween(-Math.PI * 0.85, Math.PI * 0.85);
+  }
+
+  const halfSpan = span / 2;
+  let offset = randomBetween(-halfSpan * 0.92, halfSpan * 0.92);
+  if (Math.abs(offset) < Math.PI * 0.12) {
+    offset += Math.sign(offset || randomBetween(-1, 1)) * Math.PI * 0.12;
+  }
+  return clampAngleToArc(dribbleControl.arcCenter + offset, dribbleControl.arcCenter, span);
+}
+
+function updateDribbleTarget(bounce) {
+  const bounceLow = bounce < 0.08;
+  if (bounceLow && !dribbleControl.lastBounceLow) {
+    dribbleControl.targetAngle = pickDribbleTargetAngle();
+  }
+  dribbleControl.lastBounceLow = bounceLow;
 }
 
 function updatePlayer(dt) {
@@ -269,20 +343,21 @@ function updatePlayer(dt) {
   player.x = clamp(player.x, -court.width / 2 - edgeOverhang, court.width / 2 + edgeOverhang);
   player.y = clamp(player.y, -edgeOverhang, court.depth + edgeOverhang);
   player.shootCooldown = Math.max(0, player.shootCooldown - dt);
+  updatePlayerMoveHistory();
 }
 
 function handPoint() {
-  const toHoop = Math.atan2(hoop.y - player.y, hoop.x - player.x);
-  const side = player.dribbleHand;
   const phase = performance.now() / 1000 * 7.2;
   const bounce = (Math.sin(phase) + 1) * 0.5;
-  const lateral = side * playerModel(30);
-  const forward = playerModel(16);
-  const cos = Math.cos(toHoop);
-  const sin = Math.sin(toHoop);
+  const angle = clampAngleToArc(
+    dribbleControl.targetAngle,
+    dribbleControl.arcCenter,
+    dribbleControl.arcSpan
+  );
+  const radius = playerModel(40 + (1 - bounce) * 5);
   return {
-    x: player.x + cos * forward - sin * lateral,
-    y: player.y + sin * forward + cos * lateral,
+    x: player.x + Math.cos(angle) * radius,
+    y: player.y + Math.sin(angle) * radius,
     z: playerModel(13 + bounce * 30),
     bounce,
   };
@@ -290,10 +365,11 @@ function handPoint() {
 
 function updateControlledBall() {
   const hand = handPoint();
+  updateDribbleTarget(hand.bounce);
+  player.dribbleHand = hand.x >= player.x ? 1 : -1;
   ball.x += (hand.x - ball.x) * 0.45;
   ball.y += (hand.y - ball.y) * 0.45;
   ball.z += (hand.z - ball.z) * 0.6;
-  if (hand.bounce < 0.08) player.dribbleHand *= -1;
 }
 
 function collideBallWithPlayer(dt) {
@@ -367,7 +443,7 @@ function updateFreeBall(dt) {
     ball.vy *= -0.7;
     ball.vx *= 0.86;
     ball.vz *= 0.9;
-    message = "打板";
+    message = "\u6253\u677f";
     messageTimer = 0.7;
   }
 
@@ -381,16 +457,16 @@ function updateFreeBall(dt) {
     made += 1;
     madeCountEl.textContent = String(made);
     ball.scored = true;
-    message = "命中";
+    message = "\u547d\u4e2d";
     messageTimer = 1.1;
-    setTimeout(() => resetBallToPlayer("继续练习"), 720);
+    setTimeout(() => resetBallToPlayer("\u7ee7\u7eed\u7ec3\u4e60"), 720);
   } else if (Math.abs(rimDz) < ball.r * 1.1 && rimDist > hoop.rimRadius - 8 && rimDist < hoop.rimRadius + ball.r) {
     const nx = rimDx / (rimDist || 1);
     const ny = rimDy / (rimDist || 1);
     ball.vx += nx * 140;
     ball.vy += ny * 140;
     ball.vz = Math.max(ball.vz, 110);
-    message = "碰筐";
+    message = "\u78b0\u7b50";
     messageTimer = 0.55;
   }
 
@@ -406,7 +482,7 @@ function updateFreeBall(dt) {
 
   const pickupDist = Math.hypot(ball.x - player.x, ball.y - player.y);
   if (!ball.shot && pickupDist < 46 && ball.z < 38) {
-    resetBallToPlayer("重新控球");
+    resetBallToPlayer("\u91cd\u65b0\u63a7\u7403");
   }
 
   if (ball.shot && ball.z <= ball.r && Math.hypot(ball.vx, ball.vy) < 34 && !ball.scored) {
@@ -422,7 +498,7 @@ function update(dt) {
   if (keys.has("KeyR")) {
     player.x = -120;
     player.y = 560;
-    resetBallToPlayer("重置");
+    resetBallToPlayer("\u91cd\u7f6e");
     keys.delete("KeyR");
   }
 
@@ -788,22 +864,38 @@ function projectedPolygonPath(points) {
 }
 
 function drawPlayerGroundIndicator() {
-  const ringRadius = playerModel(31);
-  const velocityMag = Math.hypot(player.vx, player.vy);
+  const footShadowRx = screen(playerModel(38));
+  const arcWidth = Math.max(5, screen(playerModel(8)));
+  const arcGap = screen(playerModel(1.5));
   const feet = project(player.x, player.y, 0);
   const centerY = feet.y + screen(playerModel(8));
-  const ringRx = ringRadius * feet.s;
+  const arcRx = footShadowRx + arcGap + arcWidth / 2;
+  const arcRy = footShadowRx / 2 + arcGap / 2 + arcWidth / 2;
 
   ctx.save();
-  ctx.strokeStyle = "rgba(95, 204, 55, 0.9)";
-  ctx.lineWidth = Math.max(2, screen(playerModel(3)));
+  ctx.lineCap = "round";
+  ctx.strokeStyle = dribbleControl.moving ? "rgba(0, 0, 0, 0.34)" : "rgba(0, 0, 0, 0.24)";
+  ctx.lineWidth = arcWidth;
   ctx.beginPath();
-  ctx.ellipse(feet.x, centerY, ringRx, ringRx / 2, 0, 0, Math.PI * 2);
+  if (dribbleControl.arcSpan >= Math.PI * 2 - 0.001) {
+    ctx.ellipse(feet.x, centerY, arcRx, arcRy, 0, 0, Math.PI * 2);
+  } else {
+    ctx.ellipse(
+      feet.x,
+      centerY,
+      arcRx,
+      arcRy,
+      0,
+      dribbleControl.arcCenter - dribbleControl.arcSpan / 2,
+      dribbleControl.arcCenter + dribbleControl.arcSpan / 2
+    );
+  }
   ctx.stroke();
 
-  if (velocityMag > 1) {
-    const ux = player.vx / velocityMag;
-    const uy = player.vy / velocityMag;
+  if (dribbleControl.moving) {
+    const ringRadius = playerModel(31);
+    const ux = Math.cos(dribbleControl.arcCenter);
+    const uy = Math.sin(dribbleControl.arcCenter);
     const tx = -uy;
     const ty = ux;
     const baseDistance = ringRadius * 0.98;
@@ -817,8 +909,8 @@ function drawPlayerGroundIndicator() {
       { x: baseX - tx * halfBase, y: baseY - ty * halfBase },
     ];
 
-    ctx.fillStyle = "rgba(95, 204, 55, 0.96)";
-    ctx.strokeStyle = "rgba(22, 77, 14, 0.9)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
     ctx.lineWidth = Math.max(1.2, screen(playerModel(1.6)));
     projectedPolygonPath(points);
     ctx.fill();
