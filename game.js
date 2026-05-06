@@ -58,6 +58,13 @@ const ball = {
 };
 
 const keys = new Set();
+const inputFadeMs = 250;
+const inputAxes = {
+  left: { keys: ["KeyA", "ArrowLeft"], value: 0, releasedAt: 0 },
+  right: { keys: ["KeyD", "ArrowRight"], value: 0, releasedAt: 0 },
+  up: { keys: ["KeyW", "ArrowUp"], value: 0, releasedAt: 0 },
+  down: { keys: ["KeyS", "ArrowDown"], value: 0, releasedAt: 0 },
+};
 let lastT = performance.now();
 let made = 0;
 let message = "自由练习";
@@ -79,10 +86,12 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   }
   keys.add(event.code);
+  updateInputAxisKey(event.code, true);
 });
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
+  updateInputAxisKey(event.code, false);
 });
 
 function view() {
@@ -120,6 +129,34 @@ function playerModel(value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function updateInputAxisKey(code, pressed) {
+  for (const axis of Object.values(inputAxes)) {
+    if (!axis.keys.includes(code)) continue;
+    if (pressed) {
+      axis.value = 1;
+      axis.releasedAt = 0;
+    } else if (!axis.keys.some((key) => keys.has(key))) {
+      axis.releasedAt = performance.now();
+    }
+  }
+}
+
+function updateInputAxisWeights() {
+  const now = performance.now();
+  for (const axis of Object.values(inputAxes)) {
+    if (axis.keys.some((key) => keys.has(key))) {
+      axis.value = 1;
+      axis.releasedAt = 0;
+    } else if (axis.releasedAt > 0) {
+      const elapsed = now - axis.releasedAt;
+      axis.value = clamp(1 - elapsed / inputFadeMs, 0, 1);
+      if (axis.value <= 0) axis.releasedAt = 0;
+    } else {
+      axis.value = 0;
+    }
+  }
 }
 
 function kickNet(strength, dx = 0, dy = 0) {
@@ -205,18 +242,16 @@ function shoot() {
 }
 
 function updatePlayer(dt) {
-  let ix = 0;
-  let iy = 0;
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) ix -= 1;
-  if (keys.has("KeyD") || keys.has("ArrowRight")) ix += 1;
-  if (keys.has("KeyW") || keys.has("ArrowUp")) iy -= 1;
-  if (keys.has("KeyS") || keys.has("ArrowDown")) iy += 1;
+  updateInputAxisWeights();
+  let ix = inputAxes.right.value - inputAxes.left.value;
+  let iy = inputAxes.down.value - inputAxes.up.value;
 
-  const moving = ix || iy;
+  const inputMag = Math.hypot(ix, iy);
+  const moving = inputMag > 0.001;
   if (moving) {
-    const mag = Math.hypot(ix, iy);
-    ix /= mag;
-    iy /= mag;
+    const scale = inputMag > 1 ? 1 / inputMag : 1;
+    ix *= scale;
+    iy *= scale;
     const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? player.dashSpeed : player.speed;
     player.vx = ix * speed;
     player.vy = iy * speed;
@@ -542,8 +577,9 @@ function drawHoop() {
   ctx.fillStyle = "rgba(255, 248, 230, 0.035)";
   ctx.strokeStyle = "rgba(255, 248, 230, 0.11)";
   ctx.lineWidth = screen(1);
+  const markerRx = hoop.rimRadius * marker.s * 1.08;
   ctx.beginPath();
-  ctx.ellipse(marker.x, marker.y, hoop.rimRadius * marker.s * 1.08, screen(13), 0, 0, Math.PI * 2);
+  ctx.ellipse(marker.x, marker.y, markerRx, markerRx / 2, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
@@ -577,10 +613,11 @@ function drawHoop() {
   ctx.strokeRect(b.x - targetW / 2, b.y - screen(4), targetW, targetH);
 
   const r = project(hoop.x, hoop.y, hoop.z);
+  const rimRx = hoop.rimRadius * r.s;
   ctx.strokeStyle = "#db563d";
   ctx.lineWidth = screen(5);
   ctx.beginPath();
-  ctx.ellipse(r.x, r.y, hoop.rimRadius * r.s, screen(11), 0, 0, Math.PI * 2);
+  ctx.ellipse(r.x, r.y, rimRx, rimRx / 2, 0, 0, Math.PI * 2);
   ctx.stroke();
 
   const netMotion = net.activeTimer > 0 ? 1 : 0;
@@ -628,7 +665,7 @@ function drawHoop() {
   ctx.strokeStyle = "#db563d";
   ctx.lineWidth = screen(5);
   ctx.beginPath();
-  ctx.ellipse(r.x, r.y, hoop.rimRadius * r.s, screen(11), 0, 0, Math.PI * 2);
+  ctx.ellipse(r.x, r.y, rimRx, rimRx / 2, 0, 0, Math.PI * 2);
   ctx.stroke();
 }
 
@@ -638,8 +675,9 @@ function drawBall() {
   const radius = ball.r * p.s;
 
   ctx.fillStyle = `rgba(0, 0, 0, ${clamp(0.34 - ball.z / 520, 0.08, 0.3)})`;
+  const shadowRx = radius * 1.05;
   ctx.beginPath();
-  ctx.ellipse(shadow.x, shadow.y + screen(3), radius * 1.05, radius * 0.36, 0, 0, Math.PI * 2);
+  ctx.ellipse(shadow.x, shadow.y + screen(3), shadowRx, shadowRx / 2, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#e87822";
@@ -683,9 +721,11 @@ function drawPlayer() {
   );
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
+  const footShadowRx = screen(playerModel(38));
   ctx.beginPath();
-  ctx.ellipse(feet.x, feet.y + screen(playerModel(8)), screen(playerModel(38)), screen(playerModel(13)), 0, 0, Math.PI * 2);
+  ctx.ellipse(feet.x, feet.y + screen(playerModel(8)), footShadowRx, footShadowRx / 2, 0, 0, Math.PI * 2);
   ctx.fill();
+  drawPlayerGroundIndicator();
 
   ctx.strokeStyle = "#151515";
   ctx.lineWidth = screen(playerModel(5));
@@ -737,6 +777,57 @@ function drawPlayer() {
   ctx.stroke();
 }
 
+function projectedPolygonPath(points) {
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const p = project(point.x, point.y, 0);
+    if (index === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  });
+  ctx.closePath();
+}
+
+function drawPlayerGroundIndicator() {
+  const ringRadius = playerModel(31);
+  const velocityMag = Math.hypot(player.vx, player.vy);
+  const feet = project(player.x, player.y, 0);
+  const centerY = feet.y + screen(playerModel(8));
+  const ringRx = ringRadius * feet.s;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(95, 204, 55, 0.9)";
+  ctx.lineWidth = Math.max(2, screen(playerModel(3)));
+  ctx.beginPath();
+  ctx.ellipse(feet.x, centerY, ringRx, ringRx / 2, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (velocityMag > 1) {
+    const ux = player.vx / velocityMag;
+    const uy = player.vy / velocityMag;
+    const tx = -uy;
+    const ty = ux;
+    const baseDistance = ringRadius * 0.98;
+    const tipDistance = ringRadius + playerModel(15);
+    const halfBase = playerModel(7);
+    const baseX = player.x + ux * baseDistance;
+    const baseY = player.y + uy * baseDistance;
+    const points = [
+      { x: baseX + tx * halfBase, y: baseY + ty * halfBase },
+      { x: player.x + ux * tipDistance, y: player.y + uy * tipDistance },
+      { x: baseX - tx * halfBase, y: baseY - ty * halfBase },
+    ];
+
+    ctx.fillStyle = "rgba(95, 204, 55, 0.96)";
+    ctx.strokeStyle = "rgba(22, 77, 14, 0.9)";
+    ctx.lineWidth = Math.max(1.2, screen(playerModel(1.6)));
+    projectedPolygonPath(points);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function strokeLimb(...points) {
   ctx.beginPath();
   points.forEach((p, index) => {
@@ -761,6 +852,68 @@ function drawMessage() {
   ctx.textAlign = "center";
   ctx.fillText(message, v.cx, v.h - 60);
   ctx.globalAlpha = 1;
+}
+
+function drawVelocityRadar() {
+  const v = view();
+  const radius = clamp(Math.min(v.w, v.h) * 0.075, 34, 48);
+  const margin = Math.max(18, radius * 0.55);
+  const cx = margin + radius;
+  const cy = v.h - margin - radius;
+  const nx = clamp(player.vx / player.dashSpeed, -1, 1);
+  const ny = clamp(player.vy / player.dashSpeed, -1, 1);
+  const px = cx + nx * radius;
+  const py = cy + ny * radius;
+  const normalSpeedRadius = radius * (player.speed / player.dashSpeed);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(10, 16, 12, 0.62)";
+  ctx.strokeStyle = "rgba(245, 248, 230, 0.38)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(245, 248, 230, 0.14)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - radius, cy);
+  ctx.lineTo(cx + radius, cy);
+  ctx.moveTo(cx, cy - radius);
+  ctx.lineTo(cx, cy + radius);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(245, 248, 230, 0.18)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, normalSpeedRadius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(74, 171, 231, 0.72)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, py);
+  ctx.lineTo(px, py);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(126, 210, 77, 0.72)";
+  ctx.beginPath();
+  ctx.moveTo(px, cy);
+  ctx.lineTo(px, py);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(250, 255, 238, 0.86)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(px, py);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(250, 255, 238, 0.95)";
+  ctx.beginPath();
+  ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function roundRect(x, y, w, h, r) {
@@ -796,6 +949,7 @@ function render() {
     drawPlayer();
     drawBall();
   }
+  drawVelocityRadar();
   drawMessage();
 }
 
