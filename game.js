@@ -36,8 +36,8 @@ const player = {
   vx: 0,
   vy: 0,
   facing: -Math.PI / 2,
-  speed: 235,
-  dashSpeed: 330,
+  speed: 235 * 2 / 3,
+  dashSpeed: 235,
   stride: 0,
   dribbleHand: 1,
   shootCooldown: 0,
@@ -68,7 +68,17 @@ const dribbleControl = {
 };
 
 const keys = new Set();
-const inputFadeMs = 250;
+const acceleration = {
+  key: "KeyI",
+  prepDuration: 1.2,
+  speedMultiplier: 1.5,
+  maxTurnRate: Math.PI / 2,
+  normalInputFadeMs: 250,
+  phase: "idle",
+  prepTimer: 0,
+  lockX: 0,
+  lockY: 0,
+};
 const inputAxes = {
   left: { keys: ["KeyA", "ArrowLeft"], value: 0, releasedAt: 0 },
   right: { keys: ["KeyD", "ArrowRight"], value: 0, releasedAt: 0 },
@@ -167,7 +177,7 @@ function updateInputAxisKey(code, pressed) {
   }
 }
 
-function updateInputAxisWeights() {
+function updateInputAxisWeights(fadeMs = acceleration.normalInputFadeMs) {
   const now = performance.now();
   for (const axis of Object.values(inputAxes)) {
     if (axis.keys.some((key) => keys.has(key))) {
@@ -175,12 +185,55 @@ function updateInputAxisWeights() {
       axis.releasedAt = 0;
     } else if (axis.releasedAt > 0) {
       const elapsed = now - axis.releasedAt;
-      axis.value = clamp(1 - elapsed / inputFadeMs, 0, 1);
+      axis.value = clamp(1 - elapsed / fadeMs, 0, 1);
       if (axis.value <= 0) axis.releasedAt = 0;
     } else {
       axis.value = 0;
     }
   }
+}
+
+function normalizeInput(ix, iy) {
+  const mag = Math.hypot(ix, iy);
+  if (mag <= 0.001) return { x: 0, y: 0, mag };
+  const scale = mag > 1 ? 1 / mag : 1;
+  return { x: ix * scale, y: iy * scale, mag };
+}
+
+function rotateAngleToward(current, target, maxDelta) {
+  const delta = angleDelta(target, current);
+  return current + clamp(delta, -maxDelta, maxDelta);
+}
+
+function wantsLockedPrepMovement(moving, ix, iy) {
+  if (!moving) return false;
+  return ix * acceleration.lockX + iy * acceleration.lockY > 0.5;
+}
+
+function updateAccelerationState(dt, wantsAcceleration, moving, ix, iy) {
+  if (!wantsAcceleration) {
+    acceleration.phase = "idle";
+    acceleration.prepTimer = 0;
+    acceleration.lockX = 0;
+    acceleration.lockY = 0;
+    return;
+  }
+
+  if (acceleration.phase === "idle") {
+    acceleration.phase = "prepping";
+    acceleration.prepTimer = 0;
+    acceleration.lockX = moving ? ix : Math.cos(player.facing);
+    acceleration.lockY = moving ? iy : Math.sin(player.facing);
+    return;
+  }
+
+  if (acceleration.phase === "prepping") {
+    acceleration.prepTimer += dt;
+    if (acceleration.prepTimer >= acceleration.prepDuration) {
+      acceleration.phase = "sprinting";
+    }
+  }
+
 }
 
 function kickNet(strength, dx = 0, dy = 0) {
@@ -282,7 +335,7 @@ function updatePlayerMoveHistory() {
   dribbleControl.moving = displacement > dribbleControl.moveDistanceThreshold;
   if (dribbleControl.moving) {
     dribbleControl.arcCenter = Math.atan2(dy, dx);
-    dribbleControl.arcSpan = Math.PI;
+    dribbleControl.arcSpan = acceleration.phase === "sprinting" ? Math.PI * 2 / 3 : Math.PI;
     dribbleControl.targetAngle = clampAngleToArc(
       dribbleControl.targetAngle,
       dribbleControl.arcCenter,
@@ -316,20 +369,37 @@ function updateDribbleTarget(bounce) {
 }
 
 function updatePlayer(dt) {
-  updateInputAxisWeights();
+  updateInputAxisWeights(acceleration.normalInputFadeMs);
   let ix = inputAxes.right.value - inputAxes.left.value;
   let iy = inputAxes.down.value - inputAxes.up.value;
 
-  const inputMag = Math.hypot(ix, iy);
-  const moving = inputMag > 0.001;
-  if (moving) {
-    const scale = inputMag > 1 ? 1 / inputMag : 1;
-    ix *= scale;
-    iy *= scale;
-    const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? player.dashSpeed : player.speed;
-    player.vx = ix * speed;
-    player.vy = iy * speed;
-    player.facing = Math.atan2(iy, ix);
+  const input = normalizeInput(ix, iy);
+  ix = input.x;
+  iy = input.y;
+  const moving = input.mag > 0.001;
+  updateAccelerationState(dt, keys.has(acceleration.key), moving, ix, iy);
+  const prepMoving = acceleration.phase === "prepping" && wantsLockedPrepMovement(moving, ix, iy);
+  const hasMovement = acceleration.phase === "prepping" ? prepMoving : moving;
+
+  if (hasMovement) {
+    if (acceleration.phase === "prepping") {
+      ix = acceleration.lockX;
+      iy = acceleration.lockY;
+    }
+
+    const speed = acceleration.phase === "sprinting" ? player.speed * acceleration.speedMultiplier : player.speed;
+    if (acceleration.phase === "sprinting") {
+      const targetAngle = moving ? Math.atan2(iy, ix) : Math.atan2(player.vy, player.vx);
+      const currentAngle = Math.hypot(player.vx, player.vy) > 0.001 ? Math.atan2(player.vy, player.vx) : player.facing;
+      const moveAngle = rotateAngleToward(currentAngle, targetAngle, acceleration.maxTurnRate * dt);
+      player.vx = Math.cos(moveAngle) * speed;
+      player.vy = Math.sin(moveAngle) * speed;
+      player.facing = moveAngle;
+    } else {
+      player.vx = ix * speed;
+      player.vy = iy * speed;
+      player.facing = Math.atan2(iy, ix);
+    }
     player.stride += dt * (speed / 36);
   } else {
     player.vx *= Math.pow(0.001, dt);
@@ -780,10 +850,22 @@ function drawBall() {
 function drawPlayer() {
   const feet = project(player.x, player.y, 0);
   const speed = Math.hypot(player.vx, player.vy);
-  const moveAngle = speed > 18 ? Math.atan2(player.vy, player.vx) : Math.atan2(hoop.y - player.y, hoop.x - player.x);
-  const lean = playerModel(clamp(speed / player.dashSpeed, 0, 1) * 16);
-  const bob = playerModel(Math.sin(player.stride) * 3);
-  const side = Math.cos(player.stride);
+  const preparing = acceleration.phase === "prepping";
+  const sprinting = acceleration.phase === "sprinting";
+  const prepAngle = Math.atan2(acceleration.lockY, acceleration.lockX);
+  const moveAngle = preparing ? prepAngle : speed > 18 ? Math.atan2(player.vy, player.vx) : Math.atan2(hoop.y - player.y, hoop.x - player.x);
+  const prepProgress = preparing ? clamp(acceleration.prepTimer / acceleration.prepDuration, 0, 1) : 0;
+  const prepLoad = Math.sin(prepProgress * Math.PI);
+  const sprintLean = sprinting ? 6 : 0;
+  const prepLean = preparing ? 9 + prepLoad * 10 : 0;
+  const crouch = playerModel(preparing ? 9 + prepLoad * 13 : sprinting ? 3 : 0);
+  const lean = playerModel(clamp(speed / player.dashSpeed, 0, 1) * 16 + sprintLean + prepLean);
+  const bob = playerModel(Math.sin(player.stride) * 3) - crouch;
+  const side = preparing ? Math.cos(player.stride) * 0.32 : Math.cos(player.stride);
+  const ux = Math.cos(moveAngle);
+  const uy = Math.sin(moveAngle);
+  const px = -uy;
+  const py = ux;
 
   const body = project(
     player.x + Math.cos(moveAngle) * lean,
@@ -808,16 +890,35 @@ function drawPlayer() {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  const leftFoot = project(player.x - playerModel(23) * side, player.y + playerModel(20), 0);
-  const rightFoot = project(player.x + playerModel(23) * side, player.y + playerModel(18), 0);
-  const hip = project(player.x, player.y, playerModel(52) + bob);
-  const kneeL = project(player.x - playerModel(15) * side, player.y + playerModel(11), playerModel(28));
-  const kneeR = project(player.x + playerModel(15) * side, player.y + playerModel(10), playerModel(28));
+  const footSpread = playerModel(23 + (preparing ? 12 * prepLoad : 0));
+  const plantBack = playerModel(preparing ? 12 + 10 * prepLoad : 0);
+  const driveForward = playerModel(sprinting ? 7 : 0);
+  const leftFoot = project(
+    player.x - px * footSpread * side - ux * plantBack,
+    player.y - py * footSpread * side - uy * plantBack + playerModel(20),
+    0
+  );
+  const rightFoot = project(
+    player.x + px * footSpread * side + ux * driveForward,
+    player.y + py * footSpread * side + uy * driveForward + playerModel(18),
+    0
+  );
+  const hip = project(player.x - ux * plantBack * 0.35, player.y - uy * plantBack * 0.35, playerModel(52) + bob);
+  const kneeL = project(
+    player.x - px * playerModel(15) * side - ux * plantBack * 0.55,
+    player.y - py * playerModel(15) * side - uy * plantBack * 0.55 + playerModel(11),
+    playerModel(28) - crouch * 0.25
+  );
+  const kneeR = project(
+    player.x + px * playerModel(15) * side,
+    player.y + py * playerModel(15) * side + playerModel(10),
+    playerModel(28) - crouch * 0.2
+  );
   strokeLimb(hip, kneeL, leftFoot);
   strokeLimb(hip, kneeR, rightFoot);
 
-  const shoulderL = project(player.x - playerModel(24), player.y - playerModel(2), playerModel(100) + bob);
-  const shoulderR = project(player.x + playerModel(24), player.y - playerModel(2), playerModel(100) + bob);
+  const shoulderL = project(player.x - playerModel(24) - ux * plantBack * 0.15, player.y - playerModel(2) - uy * plantBack * 0.15, playerModel(100) + bob);
+  const shoulderR = project(player.x + playerModel(24) - ux * plantBack * 0.15, player.y - playerModel(2) - uy * plantBack * 0.15, playerModel(100) + bob);
   const hand = handPoint();
   const dribble = project(hand.x, hand.y, hand.z + playerModel(12));
   const offHand = project(player.x - player.dribbleHand * playerModel(26), player.y - playerModel(22), playerModel(80) + bob);
@@ -874,7 +975,13 @@ function drawPlayerGroundIndicator() {
 
   ctx.save();
   ctx.lineCap = "round";
-  ctx.strokeStyle = dribbleControl.moving ? "rgba(0, 0, 0, 0.34)" : "rgba(0, 0, 0, 0.24)";
+  if (acceleration.phase === "prepping") {
+    ctx.strokeStyle = "rgba(238, 177, 64, 0.72)";
+  } else if (acceleration.phase === "sprinting") {
+    ctx.strokeStyle = "rgba(80, 190, 130, 0.72)";
+  } else {
+    ctx.strokeStyle = dribbleControl.moving ? "rgba(0, 0, 0, 0.34)" : "rgba(0, 0, 0, 0.24)";
+  }
   ctx.lineWidth = arcWidth;
   ctx.beginPath();
   if (dribbleControl.arcSpan >= Math.PI * 2 - 0.001) {
